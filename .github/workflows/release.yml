@@ -1,0 +1,40 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Release Binary
+        run: cargo build --release
+        
+      - name: Rename Binary
+        run: ren target\release\mugen-tts.exe mugen-tts-windows-x86_64.exe
+        
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/mugen-tts-windows-x86_64.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true
