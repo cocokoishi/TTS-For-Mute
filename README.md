@@ -11,7 +11,7 @@ A lightweight Text-to-Speech (TTS) application designed specifically for "Mute" 
 
 ## 📋 Prerequisites
 * **OS:** Windows PC.
-* **Driver:** You must have **VB-CABLE** (Virtual Audio Cable) installed to route the audio into VRChat.
+* **Driver:** You must have **VB-CABLE** (Virtual Audio Cable) installed to route the audio into VRChat. You can download it from https://vb-audio.com/Cable/index.htm .  
 
 ## 🛠 How to Use
 1.  **Installation:** Download and unzip the application.
