@@ -316,7 +316,49 @@ impl eframe::App for MugenTtsApp {
 
                 let response = ui.add(text_edit);
                 if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    enter_pressed = true;
+                    // 1. 从前往后比对，找出相同的前缀长度
+                    let mut prefix_len = 0;
+                    for (c_old, c_new) in old_text.chars().zip(self.text.chars()) {
+                        if c_old == c_new {
+                            prefix_len += c_old.len_utf8();
+                        } else {
+                            break;
+                        }
+                    }
+                    
+                    // 2. 从后往前比对，找出相同的后缀长度
+                    let old_rem = &old_text[prefix_len..];
+                    let new_rem = &self.text[prefix_len..];
+                    let mut suffix_len = 0;
+                    for (c_old, c_new) in old_rem.chars().rev().zip(new_rem.chars().rev()) {
+                        if c_old == c_new {
+                            suffix_len += c_old.len_utf8();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // 3. 提取出真正在光标处被改变（插入）的部分
+                    if prefix_len + suffix_len <= self.text.len() {
+                        let inserted = &self.text[prefix_len .. self.text.len() - suffix_len];
+
+                        if inserted == "\n" || inserted == "\r\n" {
+                            // 纯物理回车换行（也包含了选中一段文本后按回车替换的情况）
+                            enter_pressed = true;
+                        } else if inserted.ends_with('\n') {
+                            // IME 造成的“字母+\n”毒瘤组合！
+                            // 我们通过总长度减去后缀长度，精准算出这个 \n 所在的字节绝对索引
+                            let newline_idx = self.text.len() - suffix_len - 1;
+                            
+                            // 外科手术式精确切除，绝不会动到文档末尾的任何字符
+                            self.text.remove(newline_idx);
+                            
+                            // 顺手处理可能附带的 \r (Windows 环境)
+                            if newline_idx > 0 && self.text.as_bytes().get(newline_idx - 1) == Some(&b'\r') {
+                                self.text.remove(newline_idx - 1);
+                            }
+                        }
+                    }
                 }
             });
 
