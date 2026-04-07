@@ -23,6 +23,7 @@ pub struct MugenTtsApp {
     initialized: bool,
     pending_list: u8, // bit 0 = voices, bit 1 = devices
     scroll_to_bottom: bool,
+    ime_composing: bool,
 }
 
 impl MugenTtsApp {
@@ -48,6 +49,7 @@ impl MugenTtsApp {
             initialized: false,
             pending_list: 0,
             scroll_to_bottom: false,
+            ime_composing: false,
         }
     }
 
@@ -215,6 +217,25 @@ impl eframe::App for MugenTtsApp {
             .fill(bg)
             .inner_margin(egui::Margin::same(0.0));
 
+        // Detect IME composition state from events this frame
+        let mut ime_committed_this_frame = false;
+        ctx.input(|i| {
+            for event in &i.events {
+                if let egui::Event::Ime(ime_event) = event {
+                    match ime_event {
+                        egui::ImeEvent::Preedit(text) => {
+                            self.ime_composing = !text.is_empty();
+                        }
+                        egui::ImeEvent::Commit(_) => {
+                            self.ime_composing = false;
+                            ime_committed_this_frame = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        });
+
         // Capture old text before UI modifies it
         let old_text = self.text.clone();
         let mut enter_pressed = false;
@@ -315,7 +336,13 @@ impl eframe::App for MugenTtsApp {
                     );
 
                 let response = ui.add(text_edit);
-                if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                // Only treat Enter as a TTS trigger when NOT in IME composition
+                // and NOT immediately after an IME commit (which also fires Enter)
+                if response.has_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                    && !self.ime_composing
+                    && !ime_committed_this_frame
+                {
                     enter_pressed = true;
                 }
             });
@@ -374,6 +401,12 @@ impl eframe::App for MugenTtsApp {
 
         // Detect clipboard paste
         let pasted = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))));
+
+        // If IME just committed, the Enter key may have also inserted a spurious
+        // newline into the multiline TextEdit. Strip it so the text stays on one line.
+        if ime_committed_this_frame && self.text.ends_with('\n') && !old_text.ends_with('\n') {
+            self.text.pop(); // remove the trailing '\n' inserted by Enter
+        }
 
         // Handle text detection AFTER the UI has been drawn (no borrow conflict)
         if self.text != old_text || enter_pressed || pasted {
