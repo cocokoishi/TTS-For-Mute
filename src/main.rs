@@ -26,20 +26,22 @@ fn main() -> eframe::Result<()> {
     // Load CJK font
     let mut fonts = egui::FontDefinitions::default();
 
-    // Try to load Microsoft YaHei from system fonts
-    let font_paths = [
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\msyhbd.ttc",
-        r"C:\Windows\Fonts\simsun.ttc",
-        r"C:\Windows\Fonts\simhei.ttf",
+    // Try to load a CJK font from system fonts.
+    // Prefer smaller single-face files; for TTC containers, select only
+    // the first face (index 0) to avoid loading the entire collection.
+    let font_candidates: &[(&str, Option<u32>)] = &[
+        (r"C:\Windows\Fonts\simhei.ttf", None),      // ~10 MB, single face
+        (r"C:\Windows\Fonts\msyh.ttc", Some(0)),      // ~22 MB TTC, take face 0
+        (r"C:\Windows\Fonts\simsun.ttc", Some(0)),     // TTC, take face 0
     ];
 
-    for path in &font_paths {
+    for &(path, face_index) in font_candidates {
         if let Ok(font_data) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "cjk_font".to_string(),
-                egui::FontData::from_owned(font_data),
-            );
+            let mut fd = egui::FontData::from_owned(font_data);
+            if let Some(idx) = face_index {
+                fd.tweak.font_index = idx;
+            }
+            fonts.font_data.insert("cjk_font".to_string(), fd);
             // Add CJK font as fallback for proportional
             fonts
                 .families
