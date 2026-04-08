@@ -761,7 +761,7 @@ impl eframe::App for MugenTtsApp {
                     .text_color(egui::Color32::BLACK)
                     .layouter(&mut layouter)
                     .hint_text(
-                        egui::RichText::new("Enter text")
+                        egui::RichText::new("Enter text. source project on https://github.com/cocokoishi/TTS-for-silent-player")
                             .color(egui::Color32::from_rgb(150, 150, 160)),
                     );
 
