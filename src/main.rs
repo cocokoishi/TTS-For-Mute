@@ -18,12 +18,6 @@ use std::time::Duration;
 
 fn main() -> eframe::Result<()> {
     let focus_flag = Arc::new(AtomicBool::new(false));
-    let focus_flag_clone = focus_flag.clone();
-
-    // Global hotkey thread: monitors Shift key for window focus
-    thread::spawn(move || {
-        hotkey_listener(focus_flag_clone);
-    });
 
     let first_launch_missing_settings = !Settings::config_exists();
     let settings = Settings::load();
@@ -75,6 +69,7 @@ fn main() -> eframe::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport,
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 
@@ -82,6 +77,14 @@ fn main() -> eframe::Result<()> {
         "Mugen TTS",
         options,
         Box::new(move |cc| {
+            let focus_flag_clone = focus_flag.clone();
+            let repaint_ctx = cc.egui_ctx.clone();
+
+            // Global hotkey thread: monitors Shift key for window focus and wakes the UI
+            thread::spawn(move || {
+                hotkey_listener(focus_flag_clone, repaint_ctx);
+            });
+
             let _ = apply_window_opacity(cc, initial_window_opacity);
 
             // Set fonts with CJK support
@@ -103,7 +106,7 @@ fn main() -> eframe::Result<()> {
 }
 
 /// Monitors the Shift key globally and sets the focus flag
-fn hotkey_listener(focus_flag: Arc<AtomicBool>) {
+fn hotkey_listener(focus_flag: Arc<AtomicBool>, repaint_ctx: egui::Context) {
     #[cfg(windows)]
     {
         use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
@@ -123,6 +126,7 @@ fn hotkey_listener(focus_flag: Arc<AtomicBool>) {
                 let duration = press_start.elapsed();
                 if duration < Duration::from_millis(300) {
                     focus_flag.store(true, Ordering::Relaxed);
+                    repaint_ctx.request_repaint();
                 }
             }
 

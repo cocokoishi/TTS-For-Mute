@@ -220,6 +220,7 @@ impl MugenTtsApp {
                 RemoteBackend::OpenAiCompatible
             },
             output_device: self.settings.output_device.clone(),
+            play_on_default_speaker: self.settings.play_on_default_speaker,
             api_url: self.settings.remote_api_url.clone(),
             api_key: self.settings.remote_api_key.clone(),
             model: self.settings.remote_model.clone(),
@@ -1185,6 +1186,21 @@ impl MugenTtsApp {
                 {
                     self.clear_text_and_stop();
                 }
+
+                ui.add_space(8.0);
+
+                let mirror_cb = ui.checkbox(
+                    &mut self.settings.play_on_default_speaker,
+                    egui::RichText::new("Play on default speaker")
+                        .color(egui::Color32::from_rgb(80, 80, 90))
+                        .size(12.0),
+                );
+                if mirror_cb.changed() {
+                    self.settings.save();
+                }
+                mirror_cb.on_hover_text(
+                    "Also play Edge/OpenAI audio through the current Windows default speaker.",
+                );
             });
 
             ui.add_space(2.0);

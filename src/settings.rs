@@ -30,6 +30,7 @@ impl Default for TtsMode {
 pub struct Settings {
     pub voice_name: String,
     pub output_device: String,
+    pub play_on_default_speaker: bool,
     pub rate: i32,
     pub volume: i32,
     pub window_opacity: u8,
@@ -54,6 +55,7 @@ pub struct Settings {
 struct RawSettings {
     voice_name: String,
     output_device: String,
+    play_on_default_speaker: bool,
     rate: i32,
     volume: i32,
     window_opacity: u8,
@@ -79,6 +81,7 @@ impl Default for Settings {
         Self {
             voice_name: String::new(),
             output_device: String::new(),
+            play_on_default_speaker: false,
             rate: 0,
             volume: 100,
             window_opacity: 66,
@@ -106,6 +109,7 @@ impl Default for RawSettings {
         Self {
             voice_name: defaults.voice_name,
             output_device: defaults.output_device,
+            play_on_default_speaker: defaults.play_on_default_speaker,
             rate: defaults.rate,
             volume: defaults.volume,
             window_opacity: defaults.window_opacity,
@@ -143,6 +147,7 @@ impl<'de> Deserialize<'de> for Settings {
         Ok(Self {
             voice_name: raw.voice_name,
             output_device: raw.output_device,
+            play_on_default_speaker: raw.play_on_default_speaker,
             rate: raw.rate,
             volume: raw.volume,
             window_opacity: raw.window_opacity,

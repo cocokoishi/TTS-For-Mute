@@ -33,6 +33,7 @@ pub enum RemoteBackend {
 pub struct RemoteSettings {
     pub backend: RemoteBackend,
     pub output_device: String,
+    pub play_on_default_speaker: bool,
     pub api_url: String,
     pub api_key: String,
     pub model: String,
@@ -84,6 +85,9 @@ impl RemoteTts {
             let mut stream_info: Option<(OutputStream, rodio::OutputStreamHandle)> = None;
             let mut sink: Option<Sink> = None;
             let mut is_playing = false;
+            let mut default_stream_info: Option<(OutputStream, rodio::OutputStreamHandle)> = None;
+            let mut default_sink: Option<Sink> = None;
+            let mut default_is_playing = false;
             let mut consecutive_failures = 0u32;
             let mut edge_clock_skew_seconds = 0i64;
 
@@ -99,6 +103,18 @@ impl RemoteTts {
                             current_device_name = settings.output_device.clone();
                             sink = None;
                             stream_info = Self::open_output_stream(&current_device_name);
+                        }
+
+                        let mirror_to_default = settings.play_on_default_speaker
+                            && !Self::is_matching_default_output(&settings.output_device);
+
+                        if mirror_to_default {
+                            default_sink = None;
+                            default_stream_info = Self::open_default_output_stream();
+                        } else {
+                            default_stream_info = None;
+                            default_sink = None;
+                            default_is_playing = false;
                         }
 
                         let audio_result = match settings.backend {
@@ -117,6 +133,9 @@ impl RemoteTts {
                             &stream_info,
                             &mut sink,
                             &mut is_playing,
+                            &default_stream_info,
+                            &mut default_sink,
+                            &mut default_is_playing,
                             &event_tx,
                             &mut consecutive_failures,
                         );
@@ -125,7 +144,11 @@ impl RemoteTts {
                         if let Some(old_sink) = sink.take() {
                             old_sink.stop();
                         }
+                        if let Some(old_default_sink) = default_sink.take() {
+                            old_default_sink.stop();
+                        }
                         is_playing = false;
+                        default_is_playing = false;
                     }
                     Ok(RemoteTtsCommand::ListEdgeVoices) => {
                         match Self::list_edge_voices(&client, &mut edge_clock_skew_seconds) {
@@ -141,8 +164,18 @@ impl RemoteTts {
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
 
-                if is_playing && sink.as_ref().map(|s| s.empty()).unwrap_or(false) {
+                let primary_finished = is_playing && sink.as_ref().map(|s| s.empty()).unwrap_or(false);
+                if primary_finished {
                     is_playing = false;
+                }
+
+                let default_finished =
+                    default_is_playing && default_sink.as_ref().map(|s| s.empty()).unwrap_or(false);
+                if default_finished {
+                    default_is_playing = false;
+                }
+
+                if (primary_finished || default_finished) && !is_playing && !default_is_playing {
                     let _ = event_tx.send(RemoteTtsEvent::PlaybackFinished);
                 }
             }
@@ -184,11 +217,69 @@ impl RemoteTts {
             })
     }
 
+    fn open_default_output_stream() -> Option<(OutputStream, rodio::OutputStreamHandle)> {
+        OutputStream::try_default().ok()
+    }
+
+    fn default_output_device_name() -> Option<String> {
+        use rodio::cpal::traits::{DeviceTrait, HostTrait};
+
+        rodio::cpal::default_host()
+            .default_output_device()
+            .and_then(|device| device.name().ok())
+    }
+
+    fn is_matching_default_output(device_name: &str) -> bool {
+        let trimmed = device_name.trim();
+        if trimmed.is_empty() {
+            return true;
+        }
+
+        let Some(default_name) = Self::default_output_device_name() else {
+            return false;
+        };
+
+        default_name.contains(trimmed) || trimmed.contains(&default_name)
+    }
+
+    fn append_audio_to_sink(
+        bytes: &[u8],
+        stream_info: &Option<(OutputStream, rodio::OutputStreamHandle)>,
+        sink: &mut Option<Sink>,
+    ) -> Result<bool, String> {
+        if stream_info.is_none() {
+            return Ok(false);
+        }
+
+        let cursor = std::io::Cursor::new(bytes.to_vec());
+        let source = Decoder::new(cursor).map_err(|e| format!("Failed to decode audio: {e}"))?;
+
+        if sink.is_none() {
+            let Some((_, handle)) = stream_info else {
+                return Ok(false);
+            };
+
+            let new_sink =
+                Sink::try_new(handle).map_err(|e| format!("Failed to create sink: {e}"))?;
+            *sink = Some(new_sink);
+        }
+
+        let Some(active_sink) = sink else {
+            return Ok(false);
+        };
+
+        active_sink.append(source);
+        Ok(true)
+    }
+
     fn handle_speak_result(
         audio_result: Result<Vec<u8>, String>,
         stream_info: &Option<(OutputStream, rodio::OutputStreamHandle)>,
         sink: &mut Option<Sink>,
         is_playing: &mut bool,
+        default_stream_info: &Option<(OutputStream, rodio::OutputStreamHandle)>,
+        default_sink: &mut Option<Sink>,
+        default_is_playing: &mut bool,
         event_tx: &mpsc::Sender<RemoteTtsEvent>,
         consecutive_failures: &mut u32,
     ) {
@@ -203,47 +294,33 @@ impl RemoteTts {
                     return;
                 }
 
-                let cursor = std::io::Cursor::new(bytes);
-                match Decoder::new(cursor) {
-                    Ok(source) => {
-                        if sink.is_none() {
-                            if let Some((_, handle)) = stream_info {
-                                match Sink::try_new(handle) {
-                                    Ok(new_sink) => *sink = Some(new_sink),
-                                    Err(e) => {
-                                        Self::emit_failure(
-                                            event_tx,
-                                            consecutive_failures,
-                                            format!("Failed to create sink: {e}"),
-                                        );
-                                        return;
-                                    }
-                                }
-                            } else {
-                                Self::emit_failure(
-                                    event_tx,
-                                    consecutive_failures,
-                                    "No audio stream available".to_string(),
-                                );
-                                return;
+                match Self::append_audio_to_sink(&bytes, stream_info, sink) {
+                    Ok(true) => {
+                        *is_playing = true;
+
+                        match Self::append_audio_to_sink(&bytes, default_stream_info, default_sink) {
+                            Ok(true) => *default_is_playing = true,
+                            Ok(false) => *default_is_playing = false,
+                            Err(e) => {
+                                *default_is_playing = false;
+                                eprintln!("[RemoteTTS] Failed to mirror audio to default speaker: {e}");
                             }
                         }
 
-                        if let Some(active_sink) = sink {
-                            active_sink.append(source);
-                            *is_playing = true;
-                            if *consecutive_failures >= 3 {
-                                let _ = event_tx.send(RemoteTtsEvent::ConnectionRecovered);
-                            }
-                            *consecutive_failures = 0;
+                        if *consecutive_failures >= 3 {
+                            let _ = event_tx.send(RemoteTtsEvent::ConnectionRecovered);
                         }
+                        *consecutive_failures = 0;
                     }
-                    Err(e) => {
+                    Ok(false) => {
                         Self::emit_failure(
                             event_tx,
                             consecutive_failures,
-                            format!("Failed to decode audio: {e}"),
+                            "No audio stream available".to_string(),
                         );
+                    }
+                    Err(message) => {
+                        Self::emit_failure(event_tx, consecutive_failures, message);
                     }
                 }
             }
