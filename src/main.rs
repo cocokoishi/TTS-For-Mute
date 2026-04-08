@@ -5,7 +5,7 @@ mod settings;
 mod tts_bridge;
 mod remote_tts;
 
-use app::MugenTtsApp;
+use app::{apply_window_opacity, MugenTtsApp};
 use eframe::egui;
 use settings::Settings;
 use std::sync::atomic::AtomicBool;
@@ -25,6 +25,8 @@ fn main() -> eframe::Result<()> {
     });
 
     let settings = Settings::load();
+    settings.save();
+    let initial_window_opacity = settings.window_opacity;
 
     // Load CJK font
     let mut fonts = egui::FontDefinitions::default();
@@ -78,6 +80,8 @@ fn main() -> eframe::Result<()> {
         "Mugen TTS",
         options,
         Box::new(move |cc| {
+            let _ = apply_window_opacity(cc, initial_window_opacity);
+
             // Set fonts with CJK support
             cc.egui_ctx.set_fonts(fonts);
 

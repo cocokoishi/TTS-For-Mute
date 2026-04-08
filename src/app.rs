@@ -2,9 +2,46 @@ use crate::settings::Settings;
 use crate::tts_bridge::{TtsBridge, TtsCommand, TtsEvent};
 use crate::remote_tts::{RemoteTts, RemoteTtsCommand, RemoteTtsEvent, RemoteSettings};
 use eframe::egui;
+#[cfg(windows)]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
+#[cfg(windows)]
+use windows::Win32::Foundation::{COLORREF, HWND};
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA,
+    WS_EX_LAYERED,
+};
+
+#[cfg(windows)]
+pub(crate) fn apply_window_opacity<T: HasWindowHandle>(target: &T, opacity: u8) -> bool {
+    let Ok(window_handle) = target.window_handle() else {
+        return false;
+    };
+
+    let hwnd = match window_handle.as_raw() {
+        RawWindowHandle::Win32(handle) => HWND(handle.hwnd.get() as *mut core::ffi::c_void),
+        _ => return false,
+    };
+
+    let alpha = ((opacity.clamp(1, 100) as u16 * 255 + 50) / 100) as u8;
+
+    unsafe {
+        let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if ex_style & (WS_EX_LAYERED.0 as isize) == 0 {
+            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as isize);
+        }
+
+        SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA).is_ok()
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn apply_window_opacity<T>(_target: &T, _opacity: u8) -> bool {
+    false
+}
 
 pub struct MugenTtsApp {
     text: String,
@@ -29,6 +66,7 @@ pub struct MugenTtsApp {
     scroll_to_bottom: bool,
     ime_composing: bool,
     show_remote_error_notice: bool,
+    last_applied_window_opacity: Option<u8>,
 }
 
 impl MugenTtsApp {
@@ -60,6 +98,7 @@ impl MugenTtsApp {
             scroll_to_bottom: false,
             ime_composing: false,
             show_remote_error_notice: false,
+            last_applied_window_opacity: None,
         }
     }
 
@@ -193,7 +232,12 @@ impl MugenTtsApp {
 }
 
 impl eframe::App for MugenTtsApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.last_applied_window_opacity != Some(self.settings.window_opacity)
+            && apply_window_opacity(frame, self.settings.window_opacity)
+        {
+            self.last_applied_window_opacity = Some(self.settings.window_opacity);
+        }
         // Process TTS events
         for event in self.tts.poll_events() {
             match event {
@@ -686,6 +730,28 @@ impl MugenTtsApp {
                         self.settings.save();
                     }
                 });
+            });
+
+            ui.add_space(2.0);
+
+            // Global window opacity
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Opacity").color(egui::Color32::from_rgb(80, 80, 90)).size(12.0)
+                );
+                let slider = ui.add(
+                    egui::Slider::new(&mut self.settings.window_opacity, 1..=100)
+                        .show_value(false)
+                        .text("")
+                );
+                ui.label(
+                    egui::RichText::new(format!("{}%", self.settings.window_opacity))
+                        .color(egui::Color32::from_rgb(80, 80, 90))
+                        .size(12.0)
+                );
+                if slider.changed() {
+                    self.settings.save();
+                }
             });
 
             ui.add_space(2.0);
