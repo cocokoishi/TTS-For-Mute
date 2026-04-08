@@ -117,6 +117,7 @@ impl MugenTtsApp {
                 model: self.settings.remote_model.clone(),
                 voice: self.settings.remote_voice.clone(),
                 speed: self.settings.remote_speed,
+                output_device: self.settings.output_device.clone(),
             };
             self.remote_tts.send(RemoteTtsCommand::Speak(chunk, remote_settings));
             

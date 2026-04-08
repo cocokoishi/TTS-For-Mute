@@ -11,6 +11,7 @@ pub struct RemoteSettings {
     pub model: String,
     pub voice: String,
     pub speed: f32,
+    pub output_device: String,
 }
 
 pub enum RemoteTtsCommand {
@@ -27,26 +28,46 @@ impl RemoteTts {
         let (cmd_tx, cmd_rx) = mpsc::channel::<RemoteTtsCommand>();
 
         thread::spawn(move || {
-            // Keep OutputStream alive for the entire thread lifetime
-            let (_stream, stream_handle) = match OutputStream::try_default() {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("[RemoteTTS] Failed to open audio output: {e}");
-                    return;
-                }
-            };
+            let mut current_device_name = String::new();
+            let mut stream_info: Option<(OutputStream, rodio::OutputStreamHandle)> = None;
 
             let client = reqwest::blocking::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .unwrap_or_else(|_| reqwest::blocking::Client::new());
 
-            // Current sink - we'll recreate it when we need to stop
+            // Current sink - we'll recreate it when we need to stop or when device changes
             let mut sink: Option<Sink> = None;
 
             while let Ok(cmd) = cmd_rx.recv() {
                 match cmd {
                     RemoteTtsCommand::Speak(text, settings) => {
+                        // Check if output device has changed
+                        if settings.output_device != current_device_name || stream_info.is_none() {
+                            current_device_name = settings.output_device.clone();
+                            // Stop current sink because stream is going to change
+                            sink = None;
+                            
+                            use rodio::cpal::traits::{HostTrait, DeviceTrait};
+                            let host = rodio::cpal::default_host();
+                            let mut target_device = None;
+                            
+                            if !current_device_name.is_empty() {
+                                if let Ok(mut devices) = host.output_devices() {
+                                    target_device = devices.find(|d| {
+                                        d.name().unwrap_or_default().contains(&current_device_name)
+                                    });
+                                }
+                            }
+                            
+                            stream_info = target_device
+                                .and_then(|d| OutputStream::try_from_device(&d).ok())
+                                .or_else(|| {
+                                    eprintln!("[RemoteTTS] Falling back to default output device");
+                                    OutputStream::try_default().ok()
+                                });
+                        }
+
                         // Build the endpoint URL:
                         // If user already typed the full path, use as-is.
                         // Otherwise append /v1/audio/speech
@@ -106,14 +127,19 @@ impl RemoteTts {
                                             Ok(source) => {
                                                 // If we don't have a sink or it has been stopped, create a new one
                                                 if sink.is_none() {
-                                                    match Sink::try_new(&stream_handle) {
-                                                        Ok(new_sink) => {
-                                                            sink = Some(new_sink);
+                                                    if let Some((_, handle)) = &stream_info {
+                                                        match Sink::try_new(handle) {
+                                                            Ok(new_sink) => {
+                                                                sink = Some(new_sink);
+                                                            }
+                                                            Err(e) => {
+                                                                eprintln!("[RemoteTTS] Failed to create sink: {e}");
+                                                                continue;
+                                                            }
                                                         }
-                                                        Err(e) => {
-                                                            eprintln!("[RemoteTTS] Failed to create sink: {e}");
-                                                            continue;
-                                                        }
+                                                    } else {
+                                                        eprintln!("[RemoteTTS] No audio stream available");
+                                                        continue;
                                                     }
                                                 }
 
