@@ -164,7 +164,8 @@ impl RemoteTts {
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
 
-                let primary_finished = is_playing && sink.as_ref().map(|s| s.empty()).unwrap_or(false);
+                let primary_finished =
+                    is_playing && sink.as_ref().map(|s| s.empty()).unwrap_or(false);
                 if primary_finished {
                     is_playing = false;
                 }
@@ -221,7 +222,7 @@ impl RemoteTts {
         OutputStream::try_default().ok()
     }
 
-    fn default_output_device_name() -> Option<String> {
+    pub(crate) fn default_output_device_name() -> Option<String> {
         use rodio::cpal::traits::{DeviceTrait, HostTrait};
 
         rodio::cpal::default_host()
@@ -229,7 +230,7 @@ impl RemoteTts {
             .and_then(|device| device.name().ok())
     }
 
-    fn is_matching_default_output(device_name: &str) -> bool {
+    pub(crate) fn is_matching_default_output(device_name: &str) -> bool {
         let trimmed = device_name.trim();
         if trimmed.is_empty() {
             return true;
@@ -298,12 +299,15 @@ impl RemoteTts {
                     Ok(true) => {
                         *is_playing = true;
 
-                        match Self::append_audio_to_sink(&bytes, default_stream_info, default_sink) {
+                        match Self::append_audio_to_sink(&bytes, default_stream_info, default_sink)
+                        {
                             Ok(true) => *default_is_playing = true,
                             Ok(false) => *default_is_playing = false,
                             Err(e) => {
                                 *default_is_playing = false;
-                                eprintln!("[RemoteTTS] Failed to mirror audio to default speaker: {e}");
+                                eprintln!(
+                                    "[RemoteTTS] Failed to mirror audio to default speaker: {e}"
+                                );
                             }
                         }
 

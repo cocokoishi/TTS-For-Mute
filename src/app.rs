@@ -159,6 +159,9 @@ impl MugenTtsApp {
         }
         self.tts.send(TtsCommand::SetRate(self.settings.rate));
         self.tts.send(TtsCommand::SetVolume(self.settings.volume));
+        self.tts.send(TtsCommand::SetMirrorToDefault(
+            self.should_mirror_to_default_speaker(),
+        ));
     }
 
     fn using_windows_offline(&self) -> bool {
@@ -174,6 +177,11 @@ impl MugenTtsApp {
             self.settings.tts_mode,
             TtsMode::Edge | TtsMode::OpenaiCompatibleRemote
         )
+    }
+
+    fn should_mirror_to_default_speaker(&self) -> bool {
+        self.settings.play_on_default_speaker
+            && !RemoteTts::is_matching_default_output(&self.settings.output_device)
     }
 
     fn request_edge_voices_if_needed(&mut self) {
@@ -531,6 +539,9 @@ impl eframe::App for MugenTtsApp {
                         {
                             self.settings.output_device = cable.clone();
                             self.tts.send(TtsCommand::SetDevice(cable.clone()));
+                            self.tts.send(TtsCommand::SetMirrorToDefault(
+                                self.should_mirror_to_default_speaker(),
+                            ));
                             self.settings.save();
                         }
                     }
@@ -1000,13 +1011,16 @@ impl MugenTtsApp {
                             if ui
                                 .selectable_label(i == self.selected_device_idx, d)
                                 .clicked()
-                            {
-                                self.selected_device_idx = i;
-                                self.settings.output_device = d.clone();
-                                self.tts.send(TtsCommand::SetDevice(d.clone()));
-                                self.settings.save();
+                                {
+                                    self.selected_device_idx = i;
+                                    self.settings.output_device = d.clone();
+                                    self.tts.send(TtsCommand::SetDevice(d.clone()));
+                                    self.tts.send(TtsCommand::SetMirrorToDefault(
+                                        self.should_mirror_to_default_speaker(),
+                                    ));
+                                    self.settings.save();
+                                }
                             }
-                        }
                     });
             });
 
@@ -1196,10 +1210,13 @@ impl MugenTtsApp {
                         .size(12.0),
                 );
                 if mirror_cb.changed() {
+                    self.tts.send(TtsCommand::SetMirrorToDefault(
+                        self.should_mirror_to_default_speaker(),
+                    ));
                     self.settings.save();
                 }
                 mirror_cb.on_hover_text(
-                    "Also play Edge/OpenAI audio through the current Windows default speaker.",
+                    "Also mirror Windows Offline, Edge, and OpenAI-compatible playback to the current Windows default speaker.",
                 );
             });
 

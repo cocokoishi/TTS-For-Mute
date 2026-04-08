@@ -7,6 +7,23 @@ const TTS_SCRIPT: &str = r#"
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $voice = New-Object -ComObject SAPI.SpVoice
+$mirrorVoice = $null
+$mirrorToDefault = $false
+
+function Sync-VoiceSettings($targetVoice) {
+    if ($null -eq $targetVoice) { return }
+    $targetVoice.Voice = $voice.Voice
+    $targetVoice.Rate = $voice.Rate
+    $targetVoice.Volume = $voice.Volume
+}
+
+function Reset-MirrorVoice {
+    $script:mirrorVoice = $null
+    if (-not $script:mirrorToDefault) { return }
+    $mirror = New-Object -ComObject SAPI.SpVoice
+    Sync-VoiceSettings $mirror
+    $script:mirrorVoice = $mirror
+}
 
 function Get-AudioOutputs {
     $cat = New-Object -ComObject SAPI.SpObjectTokenCategory
@@ -79,15 +96,43 @@ while ($true) {
         $cmd = $line | ConvertFrom-Json
         $r = @{ok=$true}
         switch ($cmd.a) {
-            "speak"   { $voice.Speak($cmd.t, 1) | Out-Null }
-            "stop"    { $voice.Speak("", 3) | Out-Null }
+            "speak"   {
+                if ($mirrorToDefault) {
+                    Reset-MirrorVoice
+                    if ($null -ne $mirrorVoice) {
+                        $mirrorVoice.Speak($cmd.t, 1) | Out-Null
+                    }
+                }
+                $voice.Speak($cmd.t, 1) | Out-Null
+            }
+            "stop"    {
+                if ($null -ne $mirrorVoice) {
+                    $mirrorVoice.Speak("", 3) | Out-Null
+                    $script:mirrorVoice = $null
+                }
+                $voice.Speak("", 3) | Out-Null
+            }
             "rate"    { $voice.Rate = $cmd.v }
             "vol"     { $voice.Volume = $cmd.v }
             "dev"     { Set-AudioOutput $cmd.v }
+            "mirror"  {
+                $script:mirrorToDefault = [bool]$cmd.v
+                if (-not $script:mirrorToDefault -and $null -ne $mirrorVoice) {
+                    $mirrorVoice.Speak("", 3) | Out-Null
+                    $script:mirrorVoice = $null
+                }
+            }
             "voice"   { Set-Voice $cmd.v }
             "voices"  { $r.voices = @(Get-Voices) }
             "devs"    { $r.devs = @(Get-AudioOutputs) }
-            "status"  { $r.s = ($voice.Status.RunningState -eq 2) }
+            "status"  {
+                $primarySpeaking = ($voice.Status.RunningState -eq 2)
+                $mirrorSpeaking = $false
+                if ($null -ne $mirrorVoice) {
+                    $mirrorSpeaking = ($mirrorVoice.Status.RunningState -eq 2)
+                }
+                $r.s = ($primarySpeaking -or $mirrorSpeaking)
+            }
         }
         Write-Output (ConvertTo-Json $r -Compress)
     } catch {
@@ -103,6 +148,7 @@ pub enum TtsCommand {
     SetRate(i32),
     SetVolume(i32),
     SetDevice(String),
+    SetMirrorToDefault(bool),
     SetVoice(String),
     ListVoices,
     ListDevices,
@@ -220,6 +266,12 @@ impl TtsBridge {
                 TtsCommand::SetVolume(v) => format!("{{\"a\":\"vol\",\"v\":{v}}}"),
                 TtsCommand::SetDevice(d) => {
                     format!("{{\"a\":\"dev\",\"v\":\"{d}\"}}")
+                }
+                TtsCommand::SetMirrorToDefault(enabled) => {
+                    format!(
+                        "{{\"a\":\"mirror\",\"v\":{}}}",
+                        if enabled { "true" } else { "false" }
+                    )
                 }
                 TtsCommand::SetVoice(v) => {
                     format!("{{\"a\":\"voice\",\"v\":\"{v}\"}}")
