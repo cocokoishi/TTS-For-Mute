@@ -88,6 +88,7 @@ impl RemoteTts {
             let mut default_stream_info: Option<(OutputStream, rodio::OutputStreamHandle)> = None;
             let mut default_sink: Option<Sink> = None;
             let mut default_is_playing = false;
+            let mut mirroring_default = false;
             let mut consecutive_failures = 0u32;
             let mut edge_clock_skew_seconds = 0i64;
 
@@ -109,13 +110,16 @@ impl RemoteTts {
                             && !Self::is_matching_default_output(&settings.output_device);
 
                         if mirror_to_default {
-                            default_sink = None;
-                            default_stream_info = Self::open_default_output_stream();
+                            if !mirroring_default || default_stream_info.is_none() {
+                                default_sink = None;
+                                default_stream_info = Self::open_default_output_stream();
+                            }
                         } else {
                             default_stream_info = None;
                             default_sink = None;
                             default_is_playing = false;
                         }
+                        mirroring_default = mirror_to_default;
 
                         let audio_result = match settings.backend {
                             RemoteBackend::OpenAiCompatible => {

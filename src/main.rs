@@ -8,6 +8,7 @@ mod vrchat_osc;
 
 use app::{apply_window_opacity, MugenTtsApp};
 use eframe::egui;
+use eframe::egui_wgpu::WgpuConfiguration;
 use settings::Settings;
 use std::sync::atomic::AtomicBool;
 #[cfg(windows)]
@@ -70,6 +71,11 @@ fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options: WgpuConfiguration {
+            supported_backends: eframe::wgpu::Backends::PRIMARY,
+            power_preference: eframe::wgpu::PowerPreference::LowPower,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
