@@ -19,8 +19,8 @@ use windows::Win32::Foundation::{COLORREF, HWND};
 use windows::Win32::Globalization::GetUserDefaultUILanguage;
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, GWL_EXSTYLE, LWA_ALPHA,
-    WS_EX_LAYERED,
+    GetWindowLongPtrW, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE,
+    LWA_ALPHA, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_LAYERED,
 };
 
 #[cfg(windows)]
@@ -34,14 +34,32 @@ pub(crate) fn apply_window_opacity<T: HasWindowHandle>(target: &T, opacity: u8) 
         _ => return false,
     };
 
-    let alpha = ((opacity.clamp(1, 100) as u16 * 255 + 50) / 100) as u8;
-
     unsafe {
         let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-        if ex_style & (WS_EX_LAYERED.0 as isize) == 0 {
-            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as isize);
+        let layered_style = WS_EX_LAYERED.0 as isize;
+
+        if opacity >= 100 {
+            if ex_style & layered_style != 0 {
+                let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style & !layered_style);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+                );
+            }
+
+            return true;
         }
 
+        if ex_style & layered_style == 0 {
+            let _ = SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | layered_style);
+        }
+
+        let alpha = ((opacity.clamp(1, 99) as u16 * 255 + 50) / 100) as u8;
         SetLayeredWindowAttributes(hwnd, COLORREF(0), alpha, LWA_ALPHA).is_ok()
     }
 }
@@ -614,8 +632,10 @@ impl eframe::App for MugenTtsApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
 
-        // Request continuous repaints for status polling
-        ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        // Only poll and repaint continuously while the native TTS bridge is actively speaking.
+        if self.using_windows_offline() && self.is_speaking {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
 
         let bg = egui::Color32::from_rgb(240, 240, 245); // Light background for the entire window
         let panel_bg = egui::Color32::from_rgb(230, 230, 235);
